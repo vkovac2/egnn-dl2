@@ -11,7 +11,6 @@ class E_GCL(nn.Module):
     def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, act_fn=nn.SiLU(), residual=True, attention=False, normalize=False, coords_agg='mean', tanh=False):
         super(E_GCL, self).__init__()
         input_edge = input_nf * 2
-        pe_dim = input_nf # need to change
         self.residual = residual
         self.attention = attention
         self.normalize = normalize
@@ -21,7 +20,7 @@ class E_GCL(nn.Module):
         edge_coords_nf = 1
 
         self.edge_mlp = nn.Sequential(
-            nn.Linear(input_edge + edge_coords_nf + edges_in_d, hidden_nf), # need to adapt since now we have also the pe concatenated
+            nn.Linear(input_edge + edge_coords_nf + edges_in_d, hidden_nf),
             act_fn,
             nn.Linear(hidden_nf, hidden_nf),
             act_fn)
@@ -30,12 +29,6 @@ class E_GCL(nn.Module):
             nn.Linear(hidden_nf + input_nf, hidden_nf),
             act_fn,
             nn.Linear(hidden_nf, output_nf))
-
-        self.pe_mlp = nn.Sequential(
-            nn.Linear(pe_dim, pe_dim), # need to see what dimension will the pe be
-            nn.Tanh,
-            nn.Linear(pe_dim, pe_dim)
-        )
 
         layer = nn.Linear(hidden_nf, 1, bias=False)
         torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
@@ -53,15 +46,12 @@ class E_GCL(nn.Module):
                 nn.Linear(hidden_nf, 1),
                 nn.Sigmoid())
 
-    def edge_model(self, source, target, radial, edge_attr, pe_source, pe_target): # added here the pe_source, pe_target
-        source = torch.cat([source, pe_source], dim = 1)
-        target = torch.cat([target, pe_target], dim = 1)
-
+    def edge_model(self, source, target, radial, edge_attr):
         if edge_attr is None:  # Unused.
             out = torch.cat([source, target, radial], dim=1)
         else:
             out = torch.cat([source, target, radial, edge_attr], dim=1)
-        out = self.edge_mlp(out) # now source has changed the dimensions, need to adapt that. probably it will change by 2* the dim of PE
+        out = self.edge_mlp(out)
         if self.attention:
             att_val = self.att_mlp(out)
             out = out * att_val
@@ -102,16 +92,15 @@ class E_GCL(nn.Module):
 
         return radial, coord_diff
 
-    def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None, pe = pe): # added pe here as an input
+    def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None):
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
-        
-        pe = self.pe_mlp(pe) # added. not sure if it needs to be more deep
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr, pe[row], pe[col]) # added
+
+        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
         coord = self.coord_model(coord, edge_index, coord_diff, edge_feat)
         h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
 
-        return h, coord, edge_attr, pe # added the pe here
+        return h, coord, edge_attr
 
 
 class EGNN(nn.Module):
@@ -142,30 +131,19 @@ class EGNN(nn.Module):
         self.device = device
         self.n_layers = n_layers
         self.embedding_in = nn.Linear(in_node_nf, self.hidden_nf)
-        # self.embedding_in_pe = nn.Linear(in_node_nf, self.hidden_nf) # not sure if a different embedding is needed
-
         self.embedding_out = nn.Linear(self.hidden_nf, out_node_nf)
-        # self.embedding_out_pe = nn.Linear(self.hidden_nf, out_node_nf) # not sure if a different embedding is needed
-
         for i in range(0, n_layers):
             self.add_module("gcl_%d" % i, E_GCL(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=in_edge_nf,
                                                 act_fn=act_fn, residual=residual, attention=attention,
                                                 normalize=normalize, tanh=tanh))
         self.to(self.device)
 
-    def forward(self, h, x, edges, edge_attr, pe): # added PE input as input
+    def forward(self, h, x, edges, edge_attr):
         h = self.embedding_in(h)
-        # pe = self.embedding_in_pe(pe)
-
         for i in range(0, self.n_layers):
-            h, x, _, pe = self._modules["gcl_%d" % i](h, edges, x, edge_attr=edge_attr, pe = pe) # added new output -> need also to return it at modules
+            h, x, _ = self._modules["gcl_%d" % i](h, edges, x, edge_attr=edge_attr)
         h = self.embedding_out(h)
-        # pe = self.embedding_out_pe(pe)
-        
-        
-
-
-        return h, x, pe
+        return h, x
 
 
 def unsorted_segment_sum(data, segment_ids, num_segments):
