@@ -54,8 +54,8 @@ class E_GCL(nn.Module):
                 nn.Sigmoid())
 
     def edge_model(self, source, target, radial, edge_attr, pe_source, pe_target): # added here the pe_source, pe_target
-        source = torch.cat([source, pe_source], dim = 1)
-        target = torch.cat([target, pe_target], dim = 1)
+        source = torch.cat([source, pe_source], dim = 1) # need to check what is the dimension of the source here so we can concat
+        target = torch.cat([target, pe_target], dim = 1) # i checked from the normal version and it torch.Size([96, 32])
 
         if edge_attr is None:  # Unused.
             out = torch.cat([source, target, radial], dim=1)
@@ -107,7 +107,7 @@ class E_GCL(nn.Module):
         radial, coord_diff = self.coord2radial(edge_index, coord)
         
         pe = self.pe_mlp(pe) # added. not sure if it needs to be more deep
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr, pe[row], pe[col]) # added
+        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr, pe[row], pe[col]) # added (h here is [32, 32] while h[row] is [96, 32]). row here is torch.Size([96])
         coord = self.coord_model(coord, edge_index, coord_diff, edge_feat)
         h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
 
@@ -154,7 +154,7 @@ class EGNN(nn.Module):
         self.to(self.device)
 
     def forward(self, h, x, edges, edge_attr, pe): # added PE input as input
-        h = self.embedding_in(h)
+        h = self.embedding_in(h) # h is from [32, 1] -> to [32, 32]
         # pe = self.embedding_in_pe(pe)
 
         for i in range(0, self.n_layers):
